@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* Global base styles moved to `index.html` body classes to match newer
+   Tailwind setup that avoids defining an explicit @layer base here. */
