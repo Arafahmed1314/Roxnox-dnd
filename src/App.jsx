@@ -261,7 +261,7 @@ export default function App() {
                           rowIndex={rowIndex}
                           colIndex={colIndex}
                           draggingType={draggingType}
-                          allowedTypes={["component"]}
+                          allowedTypes={["component", "column"]}
                         >
                           <div className="font-bold mb-3">{col.id}</div>
                           <div className="space-y-3">

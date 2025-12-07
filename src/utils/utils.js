@@ -47,6 +47,17 @@ export function handleDragEnd(event, ctx) {
 
     const data = active?.data?.current;
 
+    // debug logging to help trace drops (remove or gate this later)
+    try {
+        console.debug("handleDragEnd", {
+            activeId: active?.id,
+            activeData: active?.data?.current,
+            overId: over?.id,
+        });
+    } catch (e) {
+        // ignore console errors in some environments
+    }
+
     // If active corresponds to an existing column id, prefer moving that column
     let srcColEarly = null;
     layout.forEach((row, rIdx) => {
@@ -61,14 +72,17 @@ export function handleDragEnd(event, ctx) {
     ) {
         const parts = over.id.split("-");
         const toRow = parseInt(parts[2], 10);
-        let toCol = parseInt(parts[3], 10);
+        const rawCol = parseInt(parts[3], 10);
+        // if dropped on a column (`col-drop`), interpret as "after" that column
+        const isDropOnColumn = over.id.startsWith("col-drop-");
+        let toCol = isDropOnColumn && Number.isFinite(rawCol) ? rawCol + 1 : rawCol;
         setLayout((prev) => {
             const next = JSON.parse(JSON.stringify(prev));
             if (!Number.isFinite(toRow) || toRow < 0 || toRow >= next.length) return prev;
             const moving = next[srcColEarly.rIdx].columns.splice(srcColEarly.cIdx, 1)[0];
             if (srcColEarly.rIdx === toRow && srcColEarly.cIdx < toCol) toCol = Math.max(0, toCol - 1);
             if (!Number.isFinite(toCol)) toCol = next[toRow].columns.length;
-            toCol = Math.min(toCol, next[toRow].columns.length);
+            toCol = Math.min(Math.max(0, toCol), next[toRow].columns.length);
             next[toRow].columns.splice(toCol, 0, moving);
             return next;
         });
@@ -125,7 +139,11 @@ export function handleDragEnd(event, ctx) {
                 return;
             }
             if (over.id.startsWith("row-drop-")) idx = parseInt(over.id.replace("row-drop-", ""), 10);
-            else {
+            else if (over.id.startsWith("row-")) {
+                // dropping on a row -> treat as inserting AFTER that row (makes move down easier)
+                const target = layout.findIndex((r) => r.id === over.id);
+                idx = target === -1 ? layout.length : target + 1;
+            } else {
                 idx = layout.findIndex((r) => r.id === over.id);
                 if (idx === -1) idx = layout.length;
             }
@@ -160,11 +178,15 @@ export function handleDragEnd(event, ctx) {
         if (over.id && (over.id.startsWith("col-insert-") || over.id.startsWith("col-drop-"))) {
             const parts = over.id.split("-");
             const rowIndex = parseInt(parts[2], 10);
-            const colIndex = parseInt(parts[3], 10);
+            const rawColIndex = parseInt(parts[3], 10);
+            const isDropOnColumn = over.id.startsWith("col-drop-");
+            // if dropped on a column, insert AFTER it; if insert zone, use given index
+            const colIndex = isDropOnColumn && Number.isFinite(rawColIndex) ? rawColIndex + 1 : rawColIndex;
             setLayout((prev) => {
                 const next = JSON.parse(JSON.stringify(prev));
                 if (!Number.isFinite(rowIndex) || rowIndex < 0 || rowIndex >= next.length) return prev;
-                const idx = Math.min(Number.isFinite(colIndex) ? colIndex : next[rowIndex].columns.length, next[rowIndex].columns.length);
+                const idxRaw = Number.isFinite(colIndex) ? colIndex : next[rowIndex].columns.length;
+                const idx = Math.min(Math.max(0, idxRaw), next[rowIndex].columns.length);
                 const newColId = getNextColumnId(next);
                 next[rowIndex].columns.splice(idx, 0, { id: newColId, components: [] });
                 return next;
@@ -191,12 +213,24 @@ export function handleDragEnd(event, ctx) {
         }
     }
 
+    // detect existing component source (we should move existing components rather than create duplicates)
+    let srcComp = null;
+    layout.forEach((row, rIdx) => {
+        row.columns.forEach((col, cIdx) => {
+            col.components.forEach((comp, iIdx) => {
+                if (comp.id === active.id) srcComp = { rIdx, cIdx, iIdx };
+            });
+        });
+    });
+
     // inserting new component when dragging a sidebar component into a column dropzone
-    if (data && data.type === "component") {
+    // Only create when the active item is NOT an existing component (i.e., source is the sidebar)
+    if (data && data.type === "component" && !srcComp) {
         if (over.id && (over.id.startsWith("col-drop-") || over.id.startsWith("col-insert-"))) {
             const parts = over.id.split("-");
             const rowIndex = parseInt(parts[2], 10);
-            const colIndex = parseInt(parts[3], 10);
+            const colIndexRaw = parseInt(parts[3], 10);
+            const colIndex = Number.isFinite(colIndexRaw) ? colIndexRaw : NaN;
             setLayout((prev) => {
                 const next = JSON.parse(JSON.stringify(prev));
                 const cols = next[rowIndex].columns;
@@ -207,7 +241,9 @@ export function handleDragEnd(event, ctx) {
                     const nc = { id: ncId, components: [newComp] };
                     next[rowIndex].columns.push(nc);
                 } else {
-                    const idx = Math.min(colIndex, cols.length - 1);
+                    const idx = Number.isFinite(colIndex)
+                        ? Math.min(Math.max(0, colIndex), cols.length - 1)
+                        : cols.length - 1;
                     next[rowIndex].columns[idx].components.push(newComp);
                 }
                 return next;
@@ -217,19 +253,11 @@ export function handleDragEnd(event, ctx) {
     }
 
     // Moving an existing component into a column (including empty columns)
-    let srcComp = null;
-    layout.forEach((row, rIdx) => {
-        row.columns.forEach((col, cIdx) => {
-            col.components.forEach((comp, iIdx) => {
-                if (comp.id === active.id) srcComp = { rIdx, cIdx, iIdx };
-            });
-        });
-    });
-
     if (srcComp && over.id && (over.id.startsWith("col-drop-") || over.id.startsWith("col-insert-"))) {
         const parts = over.id.split("-");
         const toRow = parseInt(parts[2], 10);
-        let toCol = parseInt(parts[3], 10);
+        const toColRaw = parseInt(parts[3], 10);
+        const toCol = Number.isFinite(toColRaw) ? toColRaw : NaN;
         setLayout((prev) => {
             const next = JSON.parse(JSON.stringify(prev));
             const item = next[srcComp.rIdx].columns[srcComp.cIdx].components.splice(srcComp.iIdx, 1)[0];
@@ -239,7 +267,9 @@ export function handleDragEnd(event, ctx) {
                 const nc = { id: ncId, components: [item] };
                 next[toRow].columns.push(nc);
             } else {
-                const targetIdx = Math.min(toCol, cols.length - 1);
+                const targetIdx = Number.isFinite(toCol)
+                    ? Math.min(Math.max(0, toCol), cols.length - 1)
+                    : cols.length - 1;
                 cols[targetIdx].components.push(item);
             }
             return next;
